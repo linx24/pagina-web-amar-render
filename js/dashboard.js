@@ -1,111 +1,173 @@
-// Carga del panel desde las tablas de Supabase
+// Carga del panel desde el backend propio de A.M.A.R.
 
-    async function loadDashboard(user = null) {
-      try {
-        if (!user) {
-          const { data, error } = await supabaseClient.auth.getUser();
-          if (error) throw error;
-          user = data.user;
-        }
+function renderDashboardDevices(devices) {
+  const list = $("#devicesList");
 
-        if (!user) {
-          show('loginView');
-          return;
-        }
+  if (!devices.length) {
+    list.innerHTML =
+      '<p class="empty">Todavía no registraste dispositivos.</p>';
+    return;
+  }
 
-        // Cargar las listas completas del usuario autenticado
-        await Promise.all([
-          loadDevices(user.id),
-          loadContacts(user.id),
-          loadHeartHistory(user.id)
-        ]);
+  list.innerHTML = devices.map(device => `
+    <div class="record-item">
+      <div class="record-info">
+        <strong>${escapeHTML(device.name)}</strong>
+        <small>Estado: ${escapeHTML(device.status || "Sin estado")}</small>
+        <br>
+        <small>Última conexión: ${
+          device.last_seen_at
+            ? escapeHTML(new Date(device.last_seen_at).toLocaleString())
+            : "Sin conexión registrada"
+        }</small>
+      </div>
+    </div>
+  `).join("");
+}
 
-        const results = await Promise.all([
+function renderDashboardContacts(contacts) {
+  const list = $("#contactsList");
 
-          supabaseClient
-            .from('profiles')
-            .select('name')
-            .eq('id', user.id)
-            .maybeSingle(),
+  if (!contacts.length) {
+    list.innerHTML =
+      '<p class="empty">Todavía no agregaste contactos.</p>';
+    return;
+  }
 
-          supabaseClient
-            .from('heart_readings')
-            .select('lpm, recorded_at')
-            .eq('user_id', user.id)
-            .order('recorded_at', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
+  list.innerHTML = contacts.map(contact => `
+    <div class="record-item">
+      <div class="record-info">
+        <strong>${escapeHTML(contact.name)}</strong>
+        <small>Teléfono: ${escapeHTML(contact.phone)}</small>
+        <br>
+        <small>Correo: ${escapeHTML(contact.email || "No especificado")}</small>
+        <br>
+        <small>Relación: ${escapeHTML(contact.relationship || "No especificada")}</small>
+      </div>
+      <div class="record-actions">
+        <a class="call-button"
+           href="tel:${encodeURIComponent(contact.phone)}"
+           aria-label="Llamar a ${escapeHTML(contact.name)}">
+          Llamar
+        </a>
+      </div>
+    </div>
+  `).join("");
+}
 
-          supabaseClient
-            .from('devices')
-            .select('name, status, last_seen_at')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
+async function loadDashboard(user = null) {
+  try {
+    // Recuperar el usuario desde el token propio de A.M.A.R.
+    if (!user) {
+      const result = await window.AMARApi.getMe();
+      user = result.user;
+    }
 
-          supabaseClient
-            .from('emergency_contacts')
-            .select('id', { count: 'exact', head: true })
-            .eq('user_id', user.id),
+    if (!user) {
+      show("loginView");
+      return;
+    }
 
-          supabaseClient
-            .from('alerts')
-            .select('type, message, created_at')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
+    // Obtener el resumen, las listas y las primeras mediciones.
+    const [
+      dashboard,
+      devicesResult,
+      contactsResult,
+      readingsResult
+    ] = await Promise.all([
+      window.AMARApi.request("/api/dashboard"),
+      window.AMARApi.request("/api/devices"),
+      window.AMARApi.request("/api/contacts"),
+      window.AMARApi.request("/api/readings?limit=1000&offset=0")
+    ]);
 
-          supabaseClient
-            .from('locations')
-            .select('latitude, longitude, recorded_at')
-            .eq('user_id', user.id)
-            .order('recorded_at', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-        ]);
+    // Recuperar el historial completo por páginas de hasta 1000 filas.
+    const readings = [...(readingsResult.readings || [])];
+    let offset = readings.length;
 
-        for (const result of results) {
-          if (result.error) throw result.error;
-        }
+    while (readings.length === offset && offset > 0 &&
+           readingsResult.readings.length === 1000 &&
+           offset <= 1000000) {
+      const page = await window.AMARApi.request(
+        `/api/readings?limit=1000&offset=${offset}`
+      );
 
-        const [profile, reading, device, contacts, alertData, locationData] =
-          results.map(result => result.data);
+      const rows = page.readings || [];
+      readings.push(...rows);
+      offset += rows.length;
 
-        $('#patientName').textContent =
-          profile?.name || user.user_metadata?.name || 'Paciente';
+      if (rows.length < 1000) break;
+    }
 
-        $('#bpm').textContent = reading?.lpm ?? '--';
-        $('#readingTime').textContent = reading?.recorded_at
-          ? new Date(reading.recorded_at).toLocaleString()
-          : 'Sin datos';
+    const devices = devicesResult.devices || [];
+    const contacts = contactsResult.contacts || [];
 
-        $('#contactsCount').textContent = results[3].count ?? 0;
+    // Actualizar el resumen principal.
+    $("#patientName").textContent =
+      dashboard.profile?.name || user.name || user.email || "Paciente";
 
-        $('#deviceBadge').textContent = device
-          ? `${device.name}: ${device.status}`
-          : 'Sin dispositivo';
+    const reading = dashboard.reading;
 
-        $('#heartState').textContent = reading
-          ? 'Última lectura recibida'
-          : 'Esperando lecturas del dispositivo';
+    $("#bpm").textContent = reading?.lpm ?? "--";
 
-        $('#location').textContent = locationData
-          ? `${locationData.latitude}, ${locationData.longitude} — ${new Date(locationData.recorded_at).toLocaleString()}`
-          : 'Todavía no se recibió una ubicación.';
+    $("#readingTime").textContent = reading?.recorded_at
+      ? new Date(reading.recorded_at).toLocaleString()
+      : "Sin datos";
 
-        $('#alert').textContent = alertData
-          ? `${alertData.type}: ${alertData.message || 'Sin descripción'}`
-          : 'No hay alertas registradas.';
+    $("#contactsCount").textContent =
+      dashboard.contactsCount ?? contacts.length;
 
-        show('appView');
-      } catch (err) {
-        console.error('Error al cargar el panel:', err);
-        message(
-          '#loginMessage',
-          'No se pudo cargar el panel: ' + (err.message || 'Error desconocido.')
-        );
-        show('loginView');
+    const device = dashboard.device;
+
+    $("#deviceBadge").textContent = device
+      ? `${device.name}: ${device.status}`
+      : "Sin dispositivo";
+
+    $("#heartState").textContent = reading
+      ? "Última lectura recibida"
+      : "Esperando lecturas del dispositivo";
+
+    const location = dashboard.location;
+
+    $("#location").textContent = location
+      ? `${location.latitude}, ${location.longitude} — ${
+          new Date(location.recorded_at).toLocaleString()
+        }`
+      : "Todavía no se recibió una ubicación.";
+
+    const alertData = dashboard.alert;
+
+    $("#alert").textContent = alertData
+      ? `${alertData.type}: ${alertData.message || "Sin descripción"}`
+      : "No hay alertas registradas.";
+
+    // Mostrar las listas obtenidas de la API.
+    renderDashboardDevices(devices);
+    renderDashboardContacts(contacts);
+
+    // Entregar las mediciones al módulo que dibuja el calendario.
+    if (typeof heartReadings !== "undefined") {
+      heartReadings = readings;
+
+      if (typeof renderDailySummary === "function") {
+        renderDailySummary();
+      }
+
+      if (typeof renderCalendar === "function") {
+        renderCalendar();
       }
     }
+
+    show("appView");
+  } catch (error) {
+    console.error("Error al cargar el panel:", error);
+
+    message(
+      "#loginMessage",
+      "No se pudo cargar el panel: " +
+        (error.message || "Error desconocido.")
+    );
+
+    show("loginView");
+  }
+}

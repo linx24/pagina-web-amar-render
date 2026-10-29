@@ -1,82 +1,83 @@
-// Navegación entre vistas de login y registro
-    document.querySelectorAll('[data-show]').forEach(a => {
-      a.onclick = e => {
-        e.preventDefault();
-        message('#loginMessage', '');
-        message('#registerMessage', '');
-        show(a.dataset.show);
-      };
+// Navegación entre las vistas de inicio de sesión y registro.
+document.querySelectorAll("[data-show]").forEach(link => {
+  link.onclick = event => {
+    event.preventDefault();
+
+    message("#loginMessage", "");
+    message("#registerMessage", "");
+    show(link.dataset.show);
+  };
+});
+
+// Inicio de sesión mediante el backend de Render.
+$("#loginForm").onsubmit = async event => {
+  event.preventDefault();
+  message("#loginMessage", "");
+
+  const button = $("#loginBtn");
+  button.disabled = true;
+  button.textContent = "Ingresando...";
+
+  try {
+    const result = await window.AMARApi.login({
+      email: $("#loginEmail").value.trim(),
+      password: $("#loginPassword").value
     });
 
-    // Formulario de inicio de sesión con Supabase
-    $('#loginForm').onsubmit = async e => {
-      e.preventDefault();
-      message('#loginMessage', '');
+    message(
+      "#loginMessage",
+      "Ingreso correcto. Cargando panel...",
+      true
+    );
 
-      const btn = $('#loginBtn');
-      btn.disabled = true;
-      btn.textContent = 'Ingresando...';
+    await loadDashboard(result.user);
+  } catch (error) {
+    message(
+      "#loginMessage",
+      error.message || "No se pudo iniciar sesión."
+    );
+  } finally {
+    button.disabled = false;
+    button.textContent = "Ingresar";
+  }
+};
 
-      try {
-        const { data, error } = await supabaseClient.auth.signInWithPassword({
-          email: $('#loginEmail').value.trim(),
-          password: $('#loginPassword').value
-        });
+// Registro mediante el backend de Render.
+$("#registerForm").onsubmit = async event => {
+  event.preventDefault();
+  message("#registerMessage", "");
 
-        if (error) throw error;
+  const button = $("#registerBtn");
+  button.disabled = true;
+  button.textContent = "Creando cuenta...";
 
-        message('#loginMessage', 'Ingreso correcto. Cargando panel...', true);
-        await loadDashboard(data.user);
-      } catch (err) {
-        message('#loginMessage', err.message || 'No se pudo iniciar sesión.');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Ingresar';
-      }
-    };
+  const email = $("#registerEmail").value.trim();
+  const name = $("#name").value.trim();
+  const password = $("#registerPassword").value;
 
-    // Formulario de registro con Supabase
-    $('#registerForm').onsubmit = async e => {
-      e.preventDefault();
-      message('#registerMessage', '');
+  try {
+    const result = await window.AMARApi.register({
+      email,
+      password,
+      name
+    });
 
-      const btn = $('#registerBtn');
-      btn.disabled = true;
-      btn.textContent = 'Creando cuenta...';
+    $("#loginEmail").value = email;
 
-      const email = $('#registerEmail').value.trim();
-      const name = $('#name').value.trim();
-      const password = $('#registerPassword').value;
+    message(
+      "#registerMessage",
+      "Cuenta creada. Cargando panel...",
+      true
+    );
 
-      try {
-        const { data, error } = await supabaseClient.auth.signUp({
-          email,
-          password,
-          options: {
-            data: { name }
-          }
-        });
-
-        if (error) throw error;
-
-        $('#loginEmail').value = email;
-
-        if (data.session && data.user) {
-          message('#registerMessage', 'Cuenta creada correctamente. Cargando panel...', true);
-          await loadDashboard(data.user);
-        } else {
-          message(
-            '#registerMessage',
-            'Cuenta creada. Iniciá sesión con tu correo y contraseña.',
-            true
-          );
-          show('loginView');
-          message('#loginMessage', 'Ya podés ingresar con tu cuenta.', true);
-        }
-      } catch (err) {
-        message('#registerMessage', err.message || 'No se pudo crear la cuenta.');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Crear cuenta';
-      }
-    };
+    await loadDashboard(result.user);
+  } catch (error) {
+    message(
+      "#registerMessage",
+      error.message || "No se pudo crear la cuenta."
+    );
+  } finally {
+    button.disabled = false;
+    button.textContent = "Crear cuenta";
+  }
+};
